@@ -1,4 +1,4 @@
-# Project Mahabharatam - Knowledge Service
+# Project RAG-v1 - Knowledge Service (Mahabharata PDF )
 
 A **Retrieval-Augmented Generation (RAG)** system built with Node.js, TypeScript, PostgreSQL (pgvector), and Google Gemini.
 
@@ -40,8 +40,8 @@ A **Retrieval-Augmented Generation (RAG)** system built with Node.js, TypeScript
 2.  **Configure Environment**:
     Create a `.env` file:
     ```bash
-    GEMINI_API_KEY=AIzaSy...
-    DB_PASSWORD=mahabharata
+    GEMINI_API_KEY=...
+    DB_PASSWORD= ...
     ```
 3.  **Start Services**:
     ```bash
