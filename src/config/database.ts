@@ -12,6 +12,7 @@ export const AppDataSource = new DataSource({
     database: config.db.database,
     synchronize: true, // Use migrations in production!
     logging: false,
+    ssl: config.env === 'production' ? { rejectUnauthorized: false } : false,
     entities: [DocumentChunk, DocumentChunkRecursive],
     subscribers: [],
     migrations: [],
