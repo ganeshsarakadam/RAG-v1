@@ -16,10 +16,11 @@ email=${SSL_EMAIL} # Adding a valid address is strongly recommended
 staging=0 # Set to 1 if testing your setup to avoid hitting request limits
 
 if [ -d "$data_path" ]; then
-  read -p "Existing data found for $domains. Continue and replace existing certificate? (y/N) " decision
-  if [ "$decision" != "Y" ] && [ "$decision" != "y" ]; then
-    exit
-  fi
+  # read -p "Existing data found for $domains. Continue and replace existing certificate? (y/N) " decision
+  # if [ "$decision" != "Y" ] && [ "$decision" != "y" ]; then
+  #   exit
+  # fi
+  echo "Existing data found. Replacing..."
 fi
 
 
