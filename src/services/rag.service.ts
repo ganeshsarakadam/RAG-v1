@@ -2,7 +2,7 @@ import { retrievalService } from './retrieval.service';
 import { generateAnswer } from '../utils/gemini';
 
 export class RagService {
-    async askQuestion(question: string) {
+    async askQuestion(question: string, modelType: 'flash' | 'pro' = 'pro') {
         // 1. Retrieve relevant chunks
         const chunks = await retrievalService.queryKnowledge(question, 5);
 
@@ -20,8 +20,24 @@ export class RagService {
         // 3. Construct Prompt
         const prompt = `
 You are a knowledgeable assistant specializing in the Mahabharata.
-Answer the user's question using ONLY the provided context below.
-If the answer cannot be found in the context, politely state that you don't know based on the available information.
+Your goal is to provide a comprehensive, direct, and nuanced answer based *only* on the provided context.
+
+Instructions:
+1. **Analyze**: Read the context chunks and identify key information.
+2. **Synthesize**: If the text contains conflicting descriptions (e.g., "kind" vs "wicked"), acknowledged the complexity and synthesize a holistic view.
+3. **Answer**: Provide the final answer directly. Do not meta-explain ("The text says...").
+
+---
+**Example 1**
+*Context*: "Duryodhana was driven by jealousy. However, he was also a generous friend to Karna, bestowing the kingdom of Anga upon him."
+*User Question*: What was Duryodhana's nature?
+*Assistant Answer*: Duryodhana was a complex figure defined effectively by his intense jealousy, yet he also possessed a capacity for deep generosity and loyalty towards his friends, as seen in his support for Karna.
+
+**Example 2**
+*Context*: "Arjuna sat down, despondent. Krishna then spoke the Gita to him. Arjuna then picked up his bow."
+*User Question*: Did Arjuna fight?
+*Assistant Answer*: Yes, after initially being despondent, Arjuna overcame his hesitation through Krishna's guidance and picked up his bow to fight.
+---
 
 Context:
 ${context}
@@ -32,7 +48,7 @@ Answer:
     `;
 
         // 4. Generate Answer
-        const answer = await generateAnswer(prompt);
+        const answer = await generateAnswer(prompt, modelType);
 
         return {
             answer,

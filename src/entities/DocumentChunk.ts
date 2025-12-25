@@ -1,6 +1,7 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';
 
 @Entity()
+@Index('IDX_document_chunk_tsk', ['tsk'], { fulltext: true })
 export class DocumentChunk {
     @PrimaryGeneratedColumn('uuid')
     id!: string;
@@ -20,4 +21,13 @@ export class DocumentChunk {
 
     @Column('vector', { nullable: true })
     embedding!: number[];
+
+    @Column({
+        type: 'tsvector',
+        generatedType: 'STORED',
+        asExpression: `to_tsvector('english', content)`,
+        select: false,
+        nullable: true // Allow nulls initially if needed, though generated usually populates
+    })
+    tsk!: any;
 }

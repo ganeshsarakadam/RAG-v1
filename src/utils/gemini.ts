@@ -4,8 +4,9 @@ import { config } from '../config/env';
 const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 // Embedding model
 const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
-// Generative model
-const generativeModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+// Generative models
+const flashModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+const proModel = genAI.getGenerativeModel({ model: "gemini-3-pro-preview" });
 
 export const generateEmbedding = async (text: string): Promise<number[]> => {
     try {
@@ -18,13 +19,39 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
     }
 };
 
-export const generateAnswer = async (prompt: string): Promise<string> => {
+export const generateAnswer = async (prompt: string, modelType: 'flash' | 'pro' = 'pro'): Promise<string> => {
     try {
-        const result = await generativeModel.generateContent(prompt);
+        const model = modelType === 'flash' ? flashModel : proModel;
+        const result = await model.generateContent(prompt);
         const response = await result.response;
         return response.text();
     } catch (error) {
         console.error('Error generating answer with Gemini:', error);
         throw error;
+    }
+};
+
+export const rerankResults = async (query: string, documents: { id: string; content: string }[], topN: number = 5): Promise<string[]> => {
+    try {
+        const prompt = `
+You are a helpful assistant that assesses the relevance of search results to a user query.
+Query: "${query}"
+
+Here are the search results:
+${documents.map((doc, index) => `[${index}] (ID: ${doc.id}) ${doc.content.substring(0, 300)}...`).join('\n')}
+
+Please evaluate these results and return the **IDs** of the top ${topN} most relevant documents, ordered by relevance (most relevant first).
+Return ONLY a JSON array of strings, for example: ["id1", "id2"].
+Do not explain.
+`;
+        const result = await flashModel.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text().trim();
+        // Clean up markdown code blocks if present
+        const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        return JSON.parse(jsonStr);
+    } catch (error) {
+        console.error('Error reranking with Gemini:', error);
+        return documents.slice(0, topN).map(d => d.id); // Fallback: return top N original
     }
 };
