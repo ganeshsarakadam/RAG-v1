@@ -19,9 +19,13 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
     }
 };
 
-export const generateAnswer = async (prompt: string, modelType: 'flash' | 'pro' = 'pro'): Promise<string> => {
+export const generateAnswer = async (prompt: string, modelType: 'flash' | 'pro' = 'pro', systemInstruction?: string): Promise<string> => {
     try {
-        const model = modelType === 'flash' ? flashModel : proModel;
+        const modelName = modelType === 'flash' ? "gemini-2.0-flash" : "gemini-3-pro-preview";
+        const model = genAI.getGenerativeModel({
+            model: modelName,
+            systemInstruction
+        });
         const result = await model.generateContent(prompt);
         const response = await result.response;
         return response.text();

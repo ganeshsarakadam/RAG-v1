@@ -18,14 +18,15 @@ export class RagService {
         console.log('Context: ---->>>', context);
 
         // 3. Construct Prompt
-        const prompt = `
+        const systemInstruction = `
 You are a knowledgeable assistant specializing in the Mahabharata.
 Your goal is to provide a comprehensive, direct, and nuanced answer based *only* on the provided context.
 
 Instructions:
 1. **Analyze**: Read the context chunks and identify key information.
-2. **Synthesize**: If the text contains conflicting descriptions (e.g., "kind" vs "wicked"), acknowledged the complexity and synthesize a holistic view.
-3. **Answer**: Provide the final answer directly. Do not meta-explain ("The text says...").
+2. **Synthesize**: If the text contains conflicting descriptions (e.g., "kind" vs "wicked"), acknowledge the complexity and synthesize a holistic view.
+3. **Answer**: Provide the final answer directly. Do not meta-explain (e.g., "The text says...", "The passage describes..."). Start with the answer immediately.
+4. **Tone**: Informative, objective, and engaging.
 
 ---
 **Example 1**
@@ -37,8 +38,10 @@ Instructions:
 *Context*: "Arjuna sat down, despondent. Krishna then spoke the Gita to him. Arjuna then picked up his bow."
 *User Question*: Did Arjuna fight?
 *Assistant Answer*: Yes, after initially being despondent, Arjuna overcame his hesitation through Krishna's guidance and picked up his bow to fight.
----
+`;
 
+        // 3. Construct Prompt
+        const prompt = `
 Context:
 ${context}
 
@@ -48,7 +51,7 @@ Answer:
     `;
 
         // 4. Generate Answer
-        const answer = await generateAnswer(prompt, modelType);
+        const answer = await generateAnswer(prompt, modelType, systemInstruction);
 
         return {
             answer,

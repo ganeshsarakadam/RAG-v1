@@ -1,6 +1,7 @@
 import { DataSource } from 'typeorm';
 import { config } from './env';
 import { DocumentChunk } from '../entities/DocumentChunk';
+import { DocumentChunkRecursive } from '../entities/DocumentChunkRecursive';
 
 export const AppDataSource = new DataSource({
     type: 'postgres',
@@ -11,7 +12,7 @@ export const AppDataSource = new DataSource({
     database: config.db.database,
     synchronize: true, // Use migrations in production!
     logging: false,
-    entities: [DocumentChunk],
+    entities: [DocumentChunk, DocumentChunkRecursive],
     subscribers: [],
     migrations: [],
 });

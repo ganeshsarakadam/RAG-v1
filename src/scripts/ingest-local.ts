@@ -2,9 +2,9 @@ import fs from 'fs';
 import path from 'path';
 const pdf = require('pdf-parse');
 import { AppDataSource, initializeDatabase } from '../config/database';
-import { DocumentChunk } from '../entities/DocumentChunk';
+import { DocumentChunkRecursive } from '../entities/DocumentChunkRecursive';
 import { generateEmbedding } from '../utils/gemini';
-import { fixedSizeChunking } from '../utils/fixed-chunk-overlap';
+import { recursiveChunking } from '../utils/recursive-chunking';
 
 const PDF_FILE_NAME = 'Mahabharata (Unabridged in English).pdf';
 // Assume the file is in the root of the project (parent of src)
@@ -21,7 +21,7 @@ const ingestFile = async () => {
 
         // 1. Initialize DB
         await initializeDatabase();
-        const chunkRepository = AppDataSource.getRepository(DocumentChunk);
+        const chunkRepository = AppDataSource.getRepository(DocumentChunkRecursive);
 
         // 3. Chunking Strategy (Do this BEFORE deciding to skip, to know expected count? 
         // No, parsing PDF is expensive. Let's check DB count first.)
@@ -49,7 +49,7 @@ const ingestFile = async () => {
         console.log(`✅ Text extracted! Total pages: ${data.numpages}`);
 
         // 3. Chunking
-        const chunks = fixedSizeChunking(data.text, 1000, 200);
+        const chunks = recursiveChunking(data.text, 1000, 200);
         console.log(`ℹ️  Total Chunks to Process: ${chunks.length}`);
 
         // 4. Process in Batches
@@ -63,7 +63,7 @@ const ingestFile = async () => {
 
             console.log(`📦 Processing Batch ${batchNumber}/${totalBatches} (Chunks ${i + 1}-${Math.min(i + BATCH_SIZE, chunks.length)})...`);
 
-            const chunksToSave: DocumentChunk[] = [];
+            const chunksToSave: DocumentChunkRecursive[] = [];
             const embeddingPromises = batch.map(async (chunkText, index) => {
                 try {
                     const text = chunkText.trim();
@@ -72,12 +72,12 @@ const ingestFile = async () => {
                     // Add a small jitter/delay per request if needed, but parallel might work for small batches
                     const embedding = await generateEmbedding(text);
 
-                    const chunk = new DocumentChunk();
+                    const chunk = new DocumentChunkRecursive();
                     chunk.content = text;
                     chunk.metadata = {
                         source: PDF_FILE_NAME,
                         chunk_index: i + index,
-                        type: 'fixed-size-overlap'
+                        type: 'recursive-chunking'
                     };
                     chunk.embedding = embedding;
                     return chunk;
@@ -89,7 +89,7 @@ const ingestFile = async () => {
 
             // Wait for all embeddings in this batch
             const results = await Promise.all(embeddingPromises);
-            const validChunks = results.filter(c => c !== null) as DocumentChunk[];
+            const validChunks = results.filter(c => c !== null) as DocumentChunkRecursive[];
 
             if (validChunks.length > 0) {
                 await chunkRepository.save(validChunks);
