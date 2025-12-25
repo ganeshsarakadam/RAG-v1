@@ -63,7 +63,7 @@ export class RetrievalService {
               metadata,
               1 - (embedding <=> $1::vector) as similarity,
               'vector' as source_type
-            FROM document_chunk
+            FROM document_chunk_recursive
             ORDER BY embedding <=> $1::vector ASC
             LIMIT $2
             `,
@@ -84,7 +84,7 @@ export class RetrievalService {
               metadata,
               ts_rank(tsk, plainto_tsquery('english', $1)) as rank,
               'keyword' as source_type
-            FROM document_chunk
+            FROM document_chunk_recursive
             WHERE tsk @@ plainto_tsquery('english', $1)
             ORDER BY rank DESC
             LIMIT $2
