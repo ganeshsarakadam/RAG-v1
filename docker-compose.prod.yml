@@ -2,11 +2,8 @@ version: '3.8'
 
 services:
   app:
-    # Replace 'your-dockerhub-username' with your actual username via sed in CI/CD or env var
     image: ${DOCKER_USERNAME}/nesh-knowledge-service:latest 
     restart: always
-    ports:
-      - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -15,10 +12,32 @@ services:
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_NAME=${DB_NAME}
-      # Gemini Key should be passed securely
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      # AWS/S3 Config
       - AWS_REGION=${AWS_REGION}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+
+  nginx:
+    image: nginx:1.15-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME}
+    volumes:
+      - ./nginx/data/certbot/conf:/etc/letsencrypt
+      - ./nginx/data/certbot/www:/var/www/certbot
+      - ./nginx/app.conf.template:/etc/nginx/conf.d/app.conf.template
+    command: "/bin/sh -c \"envsubst '\\$DOMAIN_NAME' < /etc/nginx/conf.d/app.conf.template > /etc/nginx/conf.d/app.conf && while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g 'daemon off;'\""
+    depends_on:
+      - app
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - ./nginx/data/certbot/conf:/etc/letsencrypt
+      - ./nginx/data/certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
