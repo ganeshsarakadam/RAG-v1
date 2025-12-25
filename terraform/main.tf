@@ -104,6 +104,7 @@ resource "aws_instance" "app_server" {
               apt-get install -y docker.io docker-compose-v2
               usermod -aG docker ubuntu
               mkdir -p /home/ubuntu/app
+              chown -R ubuntu:ubuntu /home/ubuntu/app
               EOF
 
   tags = {
