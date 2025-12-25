@@ -5,6 +5,10 @@ if ! [ -x "$(command -v docker)" ]; then
   exit 1
 fi
 
+if [ -f .env ]; then
+  export $(cat .env | grep -v '#' | awk '/=/ {print $1}')
+fi
+
 domains=(${DOMAIN_NAME})
 rsa_key_size=4096
 data_path="./nginx/data/certbot"
