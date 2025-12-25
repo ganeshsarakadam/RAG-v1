@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Robust SSL Initialization Script (2-Stage)
+
 if ! [ -x "$(command -v docker)" ]; then
   echo 'Error: docker is not installed.' >&2
   exit 1
@@ -10,57 +12,39 @@ if [ -f .env ]; then
 fi
 
 domains=(${DOMAIN_NAME})
-rsa_key_size=4096
+email=${SSL_EMAIL}
 data_path="./nginx/data/certbot"
-email=${SSL_EMAIL} # Adding a valid address is strongly recommended
-staging=0 # Set to 1 if testing your setup to avoid hitting request limits
+staging=0
 
-if [ -d "$data_path" ]; then
-  # read -p "Existing data found for $domains. Continue and replace existing certificate? (y/N) " decision
-  # if [ "$decision" != "Y" ] && [ "$decision" != "y" ]; then
-  #   exit
-  # fi
-  echo "Existing data found. Replacing..."
-fi
+echo "### 1. Stopping Nginx ..."
+docker compose -f docker-compose.prod.yml down nginx
 
+echo "### 2. Backing up full Nginx config ..."
+cp nginx/app.conf.template nginx/app.conf.template.bak
 
-if [ ! -e "$data_path/conf/options-ssl-nginx.conf" ] || [ ! -e "$data_path/conf/ssl-dhparams.pem" ]; then
-  echo "### Downloading recommended TLS parameters ..."
-  mkdir -p "$data_path/conf"
-  curl -s https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf > "$data_path/conf/options-ssl-nginx.conf"
-  curl -s https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem > "$data_path/conf/ssl-dhparams.pem"
-  echo
-fi
+echo "### 3. Creating temp HTTP-only config ..."
+cat > nginx/app.conf.template <<EOF
+server {
+    listen 80;
+    server_name \${DOMAIN_NAME};
+    server_tokens off;
 
-echo "### Creating dummy certificate for $domains ..."
-path="/etc/letsencrypt/live/$domains"
-mkdir -p "$data_path/conf/live/$domains"
-docker compose -f docker-compose.prod.yml run --rm --entrypoint "\
-  openssl req -x509 -nodes -newkey rsa:$rsa_key_size -days 1\
-    -keyout '$path/privkey.pem' \
-    -out '$path/fullchain.pem' \
-    -subj '/CN=localhost'" certbot
-echo
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
 
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+EOF
 
-echo "### Starting nginx ..."
-docker compose -f docker-compose.prod.yml up --force-recreate -d nginx
-echo
+echo "### 4. Starting Nginx (HTTP Mode) ..."
+docker compose -f docker-compose.prod.yml up -d nginx
+echo "Waiting for Nginx to be ready..."
+sleep 10
 
-echo "### Deleting dummy certificate for $domains ..."
-docker compose -f docker-compose.prod.yml run --rm --entrypoint "\
-  rm -Rf /etc/letsencrypt/live/$domains && \
-  rm -Rf /etc/letsencrypt/archive/$domains && \
-  rm -Rf /etc/letsencrypt/renewal/$domains.conf" certbot
-echo
-
-
-echo "### Requesting Let's Encrypt certificate for $domains ..."
-#Join $domains to -d args
-domain_args=""
-for domain in "${domains[@]}"; do
-  domain_args="$domain_args -d $domain"
-done
+echo "### 5. Requesting Let's Encrypt Certificate ..."
 
 # Select appropriate email arg
 case "$email" in
@@ -71,15 +55,26 @@ esac
 # Enable staging mode if needed
 if [ $staging != "0" ]; then staging_arg="--staging"; fi
 
+domain_args=""
+for domain in "${domains[@]}"; do
+  domain_args="$domain_args -d $domain"
+done
+
 docker compose -f docker-compose.prod.yml run --rm --entrypoint "\
   certbot certonly --webroot -w /var/www/certbot \
     $staging_arg \
     $email_arg \
     $domain_args \
-    --rsa-key-size $rsa_key_size \
+    --rsa-key-size 4096 \
     --agree-tos \
     --force-renewal" certbot
-echo
 
-echo "### Reloading nginx ..."
+echo "### 6. Restoring full HTTPS config ..."
+mv nginx/app.conf.template.bak nginx/app.conf.template
+
+echo "### 7. Reloading Nginx (HTTPS Mode) ..."
 docker compose -f docker-compose.prod.yml exec nginx nginx -s reload
+# Force restart to pick up new ports/certs cleanly if reload is flaky
+docker compose -f docker-compose.prod.yml restart nginx 
+
+echo "### Done! SSL Setup Complete. ###"
