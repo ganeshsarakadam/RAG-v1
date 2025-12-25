@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  app:
+    # Replace 'your-dockerhub-username' with your actual username via sed in CI/CD or env var
+    image: ${DOCKER_USERNAME}/nesh-knowledge-service:latest 
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=5432
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      # Gemini Key should be passed securely
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # AWS/S3 Config
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}

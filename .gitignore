@@ -23,3 +23,11 @@ Thumbs.db
 docker-data/
 
 Mahabharata (Unabridged in English).pdf
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfvars
+.env
