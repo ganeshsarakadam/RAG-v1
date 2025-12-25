@@ -26,7 +26,18 @@ jobs:
         push: true
         tags: ${{ secrets.DOCKER_USERNAME }}/nesh-knowledge-service:latest
 
-    - name: Copy Compose File to Server
+    - name: Fix Permissions
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ubuntu
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          sudo mkdir -p /home/ubuntu/app
+          sudo chown -R ubuntu:ubuntu /home/ubuntu/app
+          sudo rm -f /home/ubuntu/app/docker-compose.prod.yml
+
+    - name: Copy compose file to server
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.EC2_HOST }}
