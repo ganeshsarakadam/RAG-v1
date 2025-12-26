@@ -23,6 +23,9 @@ export const ask = async (req: Request, res: Response) => {
         // Set Headers for Streaming
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.setHeader('Transfer-Encoding', 'chunked');
+        res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+        res.setHeader('Cache-Control', 'no-cache');
+        res.flushHeaders(); // Send headers immediately
 
         // Iterate over the stream
         for await (const chunk of stream) {
