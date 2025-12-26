@@ -35,6 +35,21 @@ export const generateAnswer = async (prompt: string, modelType: 'flash' | 'pro' 
     }
 };
 
+export const generateAnswerStream = async (prompt: string, modelType: 'flash' | 'pro' = 'pro', systemInstruction?: string) => {
+    try {
+        const modelName = modelType === 'flash' ? "gemini-2.0-flash" : "gemini-3-pro-preview";
+        const model = genAI.getGenerativeModel({
+            model: modelName,
+            systemInstruction
+        });
+        const result = await model.generateContentStream(prompt);
+        return result;
+    } catch (error) {
+        console.error('Error generating answer stream with Gemini:', error);
+        throw error;
+    }
+};
+
 export const rerankResults = async (query: string, documents: { id: string; content: string }[], topN: number = 5): Promise<string[]> => {
     try {
         const prompt = `
