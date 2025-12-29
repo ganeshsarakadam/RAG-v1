@@ -72,7 +72,18 @@ Answer:
             };
         }
 
-        const context = chunks.map((chunk: any) => chunk.content).join('\n\n---\n\n');
+        // ENHANCEMENT: Construct context with parent context when available
+        const context = chunks.map((chunk: any) => {
+            let contextText = chunk.content;
+
+            // If child chunk with parent, include parent for broader context
+            if (chunk.parent_content) {
+                const parentPreview = chunk.parent_content.substring(0, 500);
+                contextText = `[Parent Section Context: ${parentPreview}...]\n\n[Specific Passage: ${chunk.content}]`;
+            }
+
+            return contextText;
+        }).join('\n\n---\n\n');
 
         const systemInstruction = `
 You are a knowledgeable assistant specializing in the Mahabharata.
@@ -103,9 +114,13 @@ Answer:
             sources: chunks.map((chunk: any) => ({
                 id: chunk.id,
                 source: chunk.metadata?.source,
-                similarity: chunk.similarity,
                 parva: chunk.metadata?.parva,
-                chapter: chunk.metadata?.chapter
+                chapter: chunk.metadata?.chapter,
+                section_title: chunk.metadata?.section_title,
+                speaker: chunk.metadata?.speaker,
+                type: chunk.metadata?.type,
+                similarity: chunk.similarity,
+                has_parent: !!chunk.parent_content
             }))
         };
     }

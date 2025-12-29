@@ -6,7 +6,8 @@ const pdf = require('pdf-parse');
 import { AppDataSource, initializeDatabase } from '../config/database';
 import { DocumentChunkRecursive } from '../entities/DocumentChunkRecursive';
 import { generateEmbedding } from '../utils/gemini';
-import { recursiveChunking } from '../utils/recursive-chunking';
+import { MetadataExtractor } from '../utils/metadata-extractor';
+import { HierarchicalChunker, ChunkWithMetadata } from '../utils/hierarchical-chunking';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -69,60 +70,136 @@ const ingestFileFromS3 = async () => {
         // 3. Parse PDF
         console.log('📖 Parsing PDF content...');
         const data = await pdf(dataBuffer);
-        console.log(`✅ Text extracted! Total pages: ${data.numpages}`);
+        console.log(`✅ Extracted text from ${data.numpages} pages`);
 
-        // 4. Chunking
-        const chunks = recursiveChunking(data.text, 1000, 200);
-        console.log(`ℹ️  Total Chunks to Process: ${chunks.length}`);
+        // 4. Extract document structure
+        console.log('🔍 Analyzing document structure...');
+        const sections = MetadataExtractor.parseDocumentStructure(data.text);
+        console.log(`✅ Found ${sections.length} sections`);
 
-        // 5. Process in Batches
+        if (sections.length === 0) {
+            console.error('❌ No sections found in PDF. Check pattern matching logic.');
+            process.exit(1);
+        }
+
+        // 5. Create hierarchical chunks
+        console.log('✂️  Creating hierarchical chunks...');
+        const sourcePath = `s3://${S3_BUCKET_NAME}/${S3_FILE_KEY}`;
+        const rawChunks = HierarchicalChunker.createHierarchicalChunks(
+            sections,
+            sourcePath,
+            1000,
+            200
+        );
+        console.log(`📦 Generated ${rawChunks.length} raw chunks`);
+
+        // 6. Deduplicate
+        console.log('🗑️  Removing duplicates...');
+        const deduplicatedChunks = HierarchicalChunker.deduplicateChunks(rawChunks);
+        console.log(`✅ ${deduplicatedChunks.length} unique chunks after deduplication`);
+
+        // 7. TWO-PASS SAVING
         const BATCH_SIZE = 50;
         const DELAY_MS = 2000;
+        const chunkEntities: { [key: number]: DocumentChunkRecursive } = {};
 
-        for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-            const batch = chunks.slice(i, i + BATCH_SIZE);
+        console.log('\n📝 PASS 1: Generating embeddings and saving chunks...');
+
+        for (let i = 0; i < deduplicatedChunks.length; i += BATCH_SIZE) {
+            const batch = deduplicatedChunks.slice(i, i + BATCH_SIZE);
             const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
-            const totalBatches = Math.ceil(chunks.length / BATCH_SIZE);
+            const totalBatches = Math.ceil(deduplicatedChunks.length / BATCH_SIZE);
 
-            console.log(`📦 Processing Batch ${batchNumber}/${totalBatches} (Chunks ${i + 1}-${Math.min(i + BATCH_SIZE, chunks.length)})...`);
+            console.log(`📦 Batch ${batchNumber}/${totalBatches} (Chunks ${i + 1}-${Math.min(i + BATCH_SIZE, deduplicatedChunks.length)})`);
 
-            const embeddingPromises = batch.map(async (chunkText, index) => {
+            const embeddingPromises = batch.map(async (chunkData: ChunkWithMetadata) => {
                 try {
-                    const text = chunkText.trim();
-                    if (!text) return null;
-
-                    const embedding = await generateEmbedding(text);
+                    const embedding = await generateEmbedding(chunkData.content);
 
                     const chunk = new DocumentChunkRecursive();
-                    chunk.content = text;
-                    chunk.metadata = {
-                        source: `s3://${S3_BUCKET_NAME}/${S3_FILE_KEY}`,
-                        chunk_index: i + index,
-                        type: 'recursive-chunking'
-                    };
+                    chunk.content = chunkData.content;
+                    chunk.metadata = chunkData.metadata;
                     chunk.embedding = embedding;
-                    return chunk;
+                    chunk.contentHash = chunkData.contentHash;
+                    chunk.parentId = null;
+
+                    return {
+                        chunk,
+                        originalIndex: chunkData.metadata.chunk_index,
+                        parentIndex: chunkData.parentIndex
+                    };
                 } catch (err) {
-                    console.error(`   ❌ Failed to embed chunk ${i + index}:`, err);
+                    console.error(`   ❌ Failed chunk ${chunkData.metadata.chunk_index}:`, err);
                     return null;
                 }
             });
 
             const results = await Promise.all(embeddingPromises);
-            const validChunks = results.filter(c => c !== null) as DocumentChunkRecursive[];
+            const validResults = results.filter(r => r !== null);
 
-            if (validChunks.length > 0) {
-                await chunkRepository.save(validChunks);
-                console.log(`   ✅ Saved ${validChunks.length} chunks.`);
+            if (validResults.length > 0) {
+                const saved = await chunkRepository.save(validResults.map(r => r!.chunk));
+                validResults.forEach((result, idx) => {
+                    chunkEntities[result!.originalIndex] = saved[idx];
+                });
+                console.log(`   ✅ Saved ${validResults.length} chunks`);
             }
 
-            if (i + BATCH_SIZE < chunks.length) {
-                console.log(`   ⏳ Cooling down for ${DELAY_MS}ms...`);
-                await new Promise(pkg => setTimeout(pkg, DELAY_MS));
+            if (i + BATCH_SIZE < deduplicatedChunks.length) {
+                console.log(`   ⏳ Cooling down ${DELAY_MS}ms...`);
+                await new Promise(resolve => setTimeout(resolve, DELAY_MS));
             }
         }
 
-        console.log('🎉 Full Ingestion Complete!');
+        // 8. PASS 2: Update parent-child relationships
+        console.log('\n🔗 PASS 2: Linking parent-child relationships...');
+        const updates: DocumentChunkRecursive[] = [];
+
+        deduplicatedChunks.forEach(chunkData => {
+            if (chunkData.parentIndex !== undefined) {
+                const childEntity = chunkEntities[chunkData.metadata.chunk_index];
+                const parentEntity = chunkEntities[chunkData.parentIndex];
+
+                if (childEntity && parentEntity) {
+                    childEntity.parentId = parentEntity.id;
+                    updates.push(childEntity);
+                }
+            }
+        });
+
+        if (updates.length > 0) {
+            // Update in batches using raw SQL to avoid generated column issues
+            for (let i = 0; i < updates.length; i += 100) {
+                const batch = updates.slice(i, i + 100);
+
+                // Use raw SQL to update only the parentId column
+                for (const chunk of batch) {
+                    await AppDataSource.query(
+                        `UPDATE document_chunk_recursive SET "parentId" = $1 WHERE id = $2`,
+                        [chunk.parentId, chunk.id]
+                    );
+                }
+
+                console.log(`   Updated ${Math.min(i + 100, updates.length)}/${updates.length} child chunks...`);
+            }
+            console.log(`✅ Linked ${updates.length} child chunks to parents`);
+        }
+
+        // 9. Final statistics
+        console.log('\n📊 Final Statistics:');
+        const totalChunks = Object.keys(chunkEntities).length;
+        const parentChunks = await chunkRepository.count({
+            where: { metadata: { type: 'parent' } as any }
+        });
+        const childChunks = await chunkRepository.count({
+            where: { metadata: { type: 'child' } as any }
+        });
+
+        console.log(`   Total chunks: ${totalChunks}`);
+        console.log(`   Parent chunks: ${parentChunks} (full sections)`);
+        console.log(`   Child chunks: ${childChunks} (semantic units)`);
+
+        console.log('\n🎉 Hierarchical ingestion complete!');
         process.exit(0);
 
     } catch (error) {

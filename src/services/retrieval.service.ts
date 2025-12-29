@@ -47,11 +47,44 @@ export class RetrievalService {
                 }
             }
 
-            return finalResults;
+            // 5. ENHANCEMENT: Fetch parent context for child chunks
+            const enrichedResults = await this.enrichWithParentContext(finalResults);
+
+            return enrichedResults;
         } catch (error) {
             console.error('Error querying knowledge:', error);
             throw error;
         }
+    }
+
+    /**
+     * NEW METHOD: Enrich results with parent chunk context
+     */
+    private async enrichWithParentContext(results: any[]) {
+        const enriched = [];
+
+        for (const result of results) {
+            // If this is a child chunk with a parent, fetch parent content
+            if (result.metadata?.type === 'child' && result.parentid) {
+                const parentResult = await AppDataSource.query(
+                    `
+                    SELECT content, metadata
+                    FROM document_chunk_recursive
+                    WHERE id = $1
+                    `,
+                    [result.parentid]
+                );
+
+                if (parentResult.length > 0) {
+                    result.parent_content = parentResult[0].content;
+                    result.parent_metadata = parentResult[0].metadata;
+                }
+            }
+
+            enriched.push(result);
+        }
+
+        return enriched;
     }
 
     private async searchVector(embedding: number[], limit: number) {
@@ -61,6 +94,8 @@ export class RetrievalService {
               id,
               content,
               metadata,
+              "parentId" as parentid,
+              "contentHash" as contenthash,
               1 - (embedding <=> $1::vector) as similarity,
               'vector' as source_type
             FROM document_chunk_recursive
@@ -82,6 +117,8 @@ export class RetrievalService {
               id,
               content,
               metadata,
+              "parentId" as parentid,
+              "contentHash" as contenthash,
               ts_rank(tsk, plainto_tsquery('english', $1)) as rank,
               'keyword' as source_type
             FROM document_chunk_recursive

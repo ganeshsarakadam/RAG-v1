@@ -9,7 +9,9 @@
     "dev": "nodemon src/index.ts",
     "ingest:local": "ts-node src/scripts/ingest-local.ts",
     "ingest:s3": "ts-node src/scripts/ingest-s3.ts",
-    "ingest:s3:prod": "node dist/scripts/ingest-s3.js"
+    "ingest:s3:prod": "node dist/scripts/ingest-s3.js",
+    "validate-metadata": "ts-node src/scripts/validate-metadata.ts",
+    "test-hierarchy": "ts-node src/scripts/test-hierarchy.ts"
   },
   "keywords": [],
   "author": "",
