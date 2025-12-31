@@ -44,6 +44,65 @@ resource "aws_s3_bucket" "knowledge_bucket" {
   }
 }
 
+# --- SNS Topic for S3 Events ---
+resource "aws_sns_topic" "s3_upload_notifications" {
+  name = "s3-upload-notifications"
+
+  tags = {
+    Name        = "S3 Upload Notifications"
+    Environment = "Dev"
+  }
+}
+
+# SNS Topic Policy to allow S3 to publish
+resource "aws_sns_topic_policy" "s3_upload_policy" {
+  arn = aws_sns_topic.s3_upload_notifications.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "s3.amazonaws.com"
+        }
+        Action   = "SNS:Publish"
+        Resource = aws_sns_topic.s3_upload_notifications.arn
+        Condition = {
+          ArnLike = {
+            "aws:SourceArn" = aws_s3_bucket.knowledge_bucket.arn
+          }
+        }
+      }
+    ]
+  })
+}
+
+# S3 Bucket Notification Configuration
+resource "aws_s3_bucket_notification" "upload_notifications" {
+  bucket = aws_s3_bucket.knowledge_bucket.id
+
+  topic {
+    topic_arn = aws_sns_topic.s3_upload_notifications.arn
+    events    = ["s3:ObjectCreated:*"]
+    filter_prefix = "" # Monitor all folders
+    filter_suffix = ".pdf" # Only PDF files
+  }
+
+  depends_on = [aws_sns_topic_policy.s3_upload_policy]
+}
+
+# SNS Subscription to Webhook Endpoint
+# Note: You'll need to manually confirm this subscription after deployment
+resource "aws_sns_topic_subscription" "webhook_subscription" {
+  topic_arn = aws_sns_topic.s3_upload_notifications.arn
+  protocol  = "https"
+  endpoint  = "https://${aws_instance.app_server.public_ip}/api/webhook/s3-upload" # Update this after deployment
+
+  # Set this to false to require manual confirmation
+  endpoint_auto_confirms = false
+}
+
 # --- Security Groups ---
 resource "aws_security_group" "app_sg" {
   name        = "rag_app_sg"

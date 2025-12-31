@@ -1,8 +1,10 @@
 import { Entity, PrimaryGeneratedColumn, Column, Index, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
 
-@Entity('document_chunk_recursive')
-@Index('IDX_document_chunk_recursive_parent', ['parentId'])
-@Index('IDX_document_chunk_recursive_content_hash', ['contentHash'])
+@Entity('knowledge_base_chunks')
+@Index('IDX_kb_parent', ['parentId'])
+@Index('IDX_kb_content_hash', ['contentHash'])
+@Index('IDX_kb_religion', ['religion'])
+@Index('IDX_kb_text_source', ['textSource'])
 export class DocumentChunkRecursive {
     @PrimaryGeneratedColumn('uuid')
     id!: string;
@@ -10,13 +12,20 @@ export class DocumentChunkRecursive {
     @Column('text')
     content!: string;
 
+    // Multi-religious knowledge base support
+    @Column('varchar', { length: 50, nullable: true })
+    religion!: string | null; // e.g., 'hinduism', 'christianity', 'islam', 'buddhism'
+
+    @Column('varchar', { length: 100, nullable: true })
+    textSource!: string | null; // e.g., 'mahabharatam', 'ramayana', 'bible', 'quran'
+
     @Column('jsonb', { nullable: true })
     metadata!: {
         source?: string;
         parva?: string;
         chapter?: number;
         page?: number;
-        speaker?: string;
+        speaker?: string; // Character name - important for role-play!
         chunk_index?: number;
         type?: 'parent' | 'child';
         section_title?: string;

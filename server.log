@@ -1,0 +1,13 @@
+
+> nesh-knowledge-service@1.0.0 dev
+> nodemon src/index.ts
+
+[33m[nodemon] 3.1.11[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: ts,json[39m
+[32m[nodemon] starting `ts-node src/index.ts`[39m
+[dotenv@17.2.3] injecting env (1) from .env -- tip: 🔄 add secrets lifecycle management: https://dotenvx.com/ops
+📦 Database connected successfully
+Knowledge Service is running on port 3000 in development mode
+[32m[nodemon] clean exit - waiting for changes before restart[39m

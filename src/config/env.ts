@@ -13,4 +13,8 @@ export const config = {
         database: process.env.DB_NAME || 'knowledge_db',
     },
     geminiApiKey: process.env.GEMINI_API_KEY || '',
+    s3: {
+        bucketName: process.env.S3_BUCKET_NAME || 'neshknowledge_base',
+        region: process.env.AWS_REGION || 'us-east-2',
+    },
 };
