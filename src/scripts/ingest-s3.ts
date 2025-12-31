@@ -175,7 +175,7 @@ const ingestFileFromS3 = async () => {
                 // Use raw SQL to update only the parentId column
                 for (const chunk of batch) {
                     await AppDataSource.query(
-                        `UPDATE document_chunk_recursive SET "parentId" = $1 WHERE id = $2`,
+                        `UPDATE knowledge_base_chunks SET "parentId" = $1 WHERE id = $2`,
                         [chunk.parentId, chunk.id]
                     );
                 }

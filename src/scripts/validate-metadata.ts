@@ -32,7 +32,7 @@ const validateMetadata = async () => {
             SELECT
                 metadata->>'parva' as parva,
                 COUNT(*) as count
-            FROM document_chunk_recursive
+            FROM knowledge_base_chunks
             GROUP BY metadata->>'parva'
             ORDER BY COUNT(*) DESC
         `);
@@ -47,7 +47,7 @@ const validateMetadata = async () => {
             SELECT
                 COUNT(*) as total,
                 COUNT(metadata->>'speaker') as with_speaker
-            FROM document_chunk_recursive
+            FROM knowledge_base_chunks
         `);
 
         const speakerStats = speakerQuery[0];
@@ -61,7 +61,7 @@ const validateMetadata = async () => {
             SELECT
                 metadata->>'speaker' as speaker,
                 COUNT(*) as count
-            FROM document_chunk_recursive
+            FROM knowledge_base_chunks
             WHERE metadata->>'speaker' IS NOT NULL
             GROUP BY metadata->>'speaker'
             ORDER BY COUNT(*) DESC
@@ -92,11 +92,11 @@ const validateMetadata = async () => {
         // 7. Check for orphan children (children without parents)
         const orphanQuery = await AppDataSource.query(`
             SELECT COUNT(*) as count
-            FROM document_chunk_recursive c
+            FROM knowledge_base_chunks c
             WHERE c."parentId" IS NOT NULL
             AND NOT EXISTS (
                 SELECT 1
-                FROM document_chunk_recursive p
+                FROM knowledge_base_chunks p
                 WHERE p.id = c."parentId"
             )
         `);
@@ -113,7 +113,7 @@ const validateMetadata = async () => {
             SELECT
                 "contentHash",
                 COUNT(*) as count
-            FROM document_chunk_recursive
+            FROM knowledge_base_chunks
             WHERE "contentHash" IS NOT NULL
             GROUP BY "contentHash"
             HAVING COUNT(*) > 1

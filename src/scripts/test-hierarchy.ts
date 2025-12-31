@@ -12,7 +12,7 @@ const testHierarchy = async () => {
         // 1. Find a parent chunk
         console.log('\n📖 Finding parent chunks...');
         const parentsRaw = await AppDataSource.query(
-            `SELECT * FROM document_chunk_recursive
+            `SELECT * FROM knowledge_base_chunks
              WHERE metadata->>'type' = 'parent'
              LIMIT 3`
         );
@@ -94,10 +94,10 @@ const testHierarchy = async () => {
 
         const statsQuery = await AppDataSource.query(`
             SELECT
-                (SELECT COUNT(*) FROM document_chunk_recursive WHERE metadata->>'type' = 'parent') as parent_count,
-                (SELECT COUNT(*) FROM document_chunk_recursive WHERE metadata->>'type' = 'child') as child_count,
-                (SELECT COUNT(*) FROM document_chunk_recursive WHERE "parentId" IS NOT NULL) as children_with_parent,
-                (SELECT COUNT(*) FROM document_chunk_recursive WHERE metadata->>'type' = 'child' AND "parentId" IS NULL) as orphan_children
+                (SELECT COUNT(*) FROM knowledge_base_chunks WHERE metadata->>'type' = 'parent') as parent_count,
+                (SELECT COUNT(*) FROM knowledge_base_chunks WHERE metadata->>'type' = 'child') as child_count,
+                (SELECT COUNT(*) FROM knowledge_base_chunks WHERE "parentId" IS NOT NULL) as children_with_parent,
+                (SELECT COUNT(*) FROM knowledge_base_chunks WHERE metadata->>'type' = 'child' AND "parentId" IS NULL) as orphan_children
         `);
 
         const stats = statsQuery[0];
@@ -121,7 +121,7 @@ const testHierarchy = async () => {
                 MIN(child_count) as min_children
             FROM (
                 SELECT COUNT(*) as child_count
-                FROM document_chunk_recursive
+                FROM knowledge_base_chunks
                 WHERE "parentId" IS NOT NULL
                 GROUP BY "parentId"
             ) as counts

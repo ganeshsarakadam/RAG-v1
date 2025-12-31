@@ -69,7 +69,7 @@ export class RetrievalService {
                 const parentResult = await AppDataSource.query(
                     `
                     SELECT content, metadata
-                    FROM document_chunk_recursive
+                    FROM knowledge_base_chunks
                     WHERE id = $1
                     `,
                     [result.parentid]
@@ -98,7 +98,7 @@ export class RetrievalService {
               "contentHash" as contenthash,
               1 - (embedding <=> $1::vector) as similarity,
               'vector' as source_type
-            FROM document_chunk_recursive
+            FROM knowledge_base_chunks
             ORDER BY embedding <=> $1::vector ASC
             LIMIT $2
             `,
@@ -121,7 +121,7 @@ export class RetrievalService {
               "contentHash" as contenthash,
               ts_rank(tsk, plainto_tsquery('english', $1)) as rank,
               'keyword' as source_type
-            FROM document_chunk_recursive
+            FROM knowledge_base_chunks
             WHERE tsk @@ plainto_tsquery('english', $1)
             ORDER BY rank DESC
             LIMIT $2
