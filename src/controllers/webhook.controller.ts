@@ -21,11 +21,28 @@ export const handleS3Upload = async (req: Request, res: Response) => {
             const subscribeURL = req.body.SubscribeURL;
 
             if (subscribeURL) {
-                console.log(`   Please visit: ${subscribeURL}`);
-                res.json({
-                    message: 'Please confirm subscription',
-                    subscribeURL
-                });
+                console.log(`   Auto-confirming subscription: ${subscribeURL}`);
+
+                // Automatically confirm the subscription
+                try {
+                    const https = require('https');
+                    const confirmRes = await fetch(subscribeURL);
+                    const confirmText = await confirmRes.text();
+
+                    console.log('✅ Subscription confirmed automatically');
+                    res.json({
+                        message: 'Subscription confirmed',
+                        subscribeURL
+                    });
+                } catch (error) {
+                    console.error('❌ Failed to auto-confirm subscription:', error);
+                    console.log(`   Manual confirmation needed: ${subscribeURL}`);
+                    res.json({
+                        message: 'Auto-confirmation failed, please confirm manually',
+                        subscribeURL,
+                        error: error instanceof Error ? error.message : 'Unknown error'
+                    });
+                }
             } else {
                 res.status(400).json({ error: 'Missing SubscribeURL' });
             }
