@@ -5,6 +5,7 @@ import { Entity, PrimaryGeneratedColumn, Column, Index, ManyToOne, OneToMany, Jo
 @Index('IDX_kb_content_hash', ['contentHash'])
 @Index('IDX_kb_religion', ['religion'])
 @Index('IDX_kb_text_source', ['textSource'])
+@Index('IDX_kb_doc_category', ['docCategory'])
 export class DocumentChunkRecursive {
     @PrimaryGeneratedColumn('uuid')
     id!: string;
@@ -18,6 +19,9 @@ export class DocumentChunkRecursive {
 
     @Column('varchar', { length: 100, nullable: true })
     textSource!: string | null; // e.g., 'mahabharatam', 'ramayana', 'bible', 'quran'
+
+    @Column('varchar', { length: 50, nullable: true })
+    docCategory!: string | null; // e.g., 'scripture', 'encyclopedia', 'commentary', 'translation'
 
     @Column('jsonb', { nullable: true })
     metadata!: {
