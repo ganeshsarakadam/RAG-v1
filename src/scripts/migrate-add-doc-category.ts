@@ -57,27 +57,17 @@ async function migrateAddDocCategory() {
             return;
         }
 
-        // Update chunks in batches
+        // Update all chunks at once (PostgreSQL doesn't support LIMIT in UPDATE)
         console.log('\n🔄 Updating chunks with default docCategory = "scripture"...');
-        const batchSize = 1000;
-        let updated = 0;
 
-        while (updated < chunksWithoutCategory) {
-            await chunkRepo
-                .createQueryBuilder()
-                .update()
-                .set({ docCategory: 'scripture' })
-                .where('docCategory IS NULL')
-                .limit(batchSize)
-                .execute();
+        const result = await chunkRepo
+            .createQueryBuilder()
+            .update()
+            .set({ docCategory: 'scripture' })
+            .where('docCategory IS NULL')
+            .execute();
 
-            updated += batchSize;
-            const progress = Math.min(updated, chunksWithoutCategory);
-            const percentage = ((progress / chunksWithoutCategory) * 100).toFixed(1);
-            console.log(`   Updated ${progress.toLocaleString()} / ${chunksWithoutCategory.toLocaleString()} (${percentage}%)`);
-        }
-
-        console.log('✅ All chunks updated');
+        console.log(`✅ Updated ${result.affected?.toLocaleString() || chunksWithoutCategory.toLocaleString()} chunks`);
 
         // Create index if it doesn't exist
         console.log('\n📝 Creating index on docCategory...');
