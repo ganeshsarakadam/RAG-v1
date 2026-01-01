@@ -11,6 +11,7 @@ import { parseS3Path, isValidS3Structure } from '../utils/s3-path-parser';
 export const handleS3Upload = async (req: Request, res: Response) => {
     try {
         console.log('🔔 Received S3 webhook notification');
+        console.log('Request body:', JSON.stringify(req.body, null, 2));
 
         // SNS sends different message types
         const messageType = req.headers['x-amz-sns-message-type'];
@@ -18,7 +19,7 @@ export const handleS3Upload = async (req: Request, res: Response) => {
         // Handle SNS subscription confirmation
         if (messageType === 'SubscriptionConfirmation') {
             console.log('📝 SNS Subscription Confirmation received');
-            const subscribeURL = req.body.SubscribeURL;
+            const subscribeURL = req.body?.SubscribeURL || req.body?.subscribe_url;
 
             if (subscribeURL) {
                 console.log(`   Auto-confirming subscription: ${subscribeURL}`);
