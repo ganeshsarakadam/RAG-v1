@@ -12,6 +12,7 @@ export class IngestionService {
      * @param fileName - Name of the PDF file
      * @param religion - Religion category (e.g., 'hinduism', 'christianity')
      * @param textSource - Specific text source (e.g., 'mahabharatam', 'bible')
+     * @param docCategory - Document category (e.g., 'scripture', 'encyclopedia', 'commentary')
      * @param options - Optional configuration for chunking
      */
     async ingestDocument(
@@ -19,6 +20,7 @@ export class IngestionService {
         fileName: string,
         religion: string | null,
         textSource: string | null,
+        docCategory: string | null = 'scripture',
         options?: {
             childChunkSize?: number;
             childOverlap?: number;
@@ -106,6 +108,7 @@ export class IngestionService {
                         chunk.content = chunkData.content;
                         chunk.religion = religion;
                         chunk.textSource = textSource;
+                        chunk.docCategory = docCategory;
                         chunk.metadata = chunkData.metadata;
                         chunk.embedding = embedding;
                         chunk.contentHash = chunkData.contentHash;

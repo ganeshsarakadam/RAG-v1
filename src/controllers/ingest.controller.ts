@@ -38,6 +38,7 @@ export const ingestDocument = async (req: Request, res: Response) => {
             `s3://${s3Key}`, // Use S3 path as source identifier
             pathInfo.religion,
             pathInfo.textSource,
+            pathInfo.docCategory,
             options
         );
 

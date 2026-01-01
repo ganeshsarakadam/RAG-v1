@@ -20,7 +20,7 @@ output "sns_topic_arn" {
 
 output "webhook_url" {
   description = "Webhook endpoint URL for S3 notifications"
-  value       = "https://${aws_instance.app_server.public_ip}/api/webhook/s3-upload"
+  value       = "https://${aws_instance.app_server.public_ip}.nip.io/api/webhook/s3-upload"
 }
 
 output "ssh_command" {

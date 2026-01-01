@@ -93,11 +93,11 @@ resource "aws_s3_bucket_notification" "upload_notifications" {
 }
 
 # SNS Subscription to Webhook Endpoint
-# Note: You'll need to manually confirm this subscription after deployment
+# Using domain name to match SSL certificate (Let's Encrypt cert is for domain, not IP)
 resource "aws_sns_topic_subscription" "webhook_subscription" {
   topic_arn = aws_sns_topic.s3_upload_notifications.arn
   protocol  = "https"
-  endpoint  = "https://${aws_instance.app_server.public_ip}/api/webhook/s3-upload" # Update this after deployment
+  endpoint  = "https://${aws_instance.app_server.public_ip}.nip.io/api/webhook/s3-upload"
 
   # Set this to false to require manual confirmation
   endpoint_auto_confirms = false

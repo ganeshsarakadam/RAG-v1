@@ -103,12 +103,13 @@ export const handleS3Upload = async (req: Request, res: Response) => {
                 const pathInfo = parseS3Path(s3Key);
                 console.log(`   Religion: ${pathInfo.religion}`);
                 console.log(`   Text Source: ${pathInfo.textSource}`);
+                console.log(`   Doc Category: ${pathInfo.docCategory}`);
 
                 // Trigger ingestion asynchronously (don't wait for completion)
                 console.log(`   🚀 Triggering automatic ingestion...`);
 
                 // Start ingestion in background
-                ingestS3Document(s3Key, pathInfo.religion, pathInfo.textSource)
+                ingestS3Document(s3Key, pathInfo.religion, pathInfo.textSource, pathInfo.docCategory)
                     .then(() => console.log(`✅ Ingestion completed for ${s3Key}`))
                     .catch(err => console.error(`❌ Ingestion failed for ${s3Key}:`, err));
 
@@ -116,7 +117,8 @@ export const handleS3Upload = async (req: Request, res: Response) => {
                     s3Key,
                     status: 'triggered',
                     religion: pathInfo.religion,
-                    textSource: pathInfo.textSource
+                    textSource: pathInfo.textSource,
+                    docCategory: pathInfo.docCategory
                 });
             }
 
@@ -147,7 +149,8 @@ export const handleS3Upload = async (req: Request, res: Response) => {
 async function ingestS3Document(
     s3Key: string,
     religion: string | null,
-    textSource: string | null
+    textSource: string | null,
+    docCategory: string | null
 ): Promise<void> {
     try {
         console.log(`\n📥 Downloading ${s3Key} from S3...`);
@@ -159,6 +162,7 @@ async function ingestS3Document(
             `s3://${s3Key}`,
             religion,
             textSource,
+            docCategory,
             {
                 childChunkSize: 1000,
                 childOverlap: 200,

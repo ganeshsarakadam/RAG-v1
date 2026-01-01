@@ -1,10 +1,16 @@
 import { AppDataSource } from '../config/database';
 import { generateEmbedding, rerankResults } from '../utils/gemini';
+import { QueryClassifier } from '../utils/query-classifier';
 
 export class RetrievalService {
     async queryKnowledge(query: string, limit: number = 5) {
         try {
             console.log(`🔍 Processing query: "${query}"`);
+
+            // 0. Classify query to determine optimal category
+            const classification = QueryClassifier.classify(query);
+            console.log(`📊 Query classification: ${classification.queryType} (confidence: ${classification.confidence})`);
+            console.log(`   Category weights:`, classification.categoryWeights);
 
             // 1. Generate Embedding
             const queryEmbedding = await generateEmbedding(query);
@@ -13,9 +19,12 @@ export class RetrievalService {
             // Fetch more candidates than needed for RRF and Re-ranking
             const candidateLimit = limit * 4;
 
+            // Determine if we should filter by category (only if high confidence)
+            const categoryFilter = classification.confidence === 'high' ? classification.primaryCategory : null;
+
             const [vectorResults, keywordResults] = await Promise.all([
-                this.searchVector(queryEmbedding, candidateLimit),
-                this.searchKeyword(query, candidateLimit)
+                this.searchVector(queryEmbedding, candidateLimit, categoryFilter),
+                this.searchKeyword(query, candidateLimit, categoryFilter)
             ]);
 
             // 3. Reciprocal Rank Fusion (RRF)
@@ -87,7 +96,11 @@ export class RetrievalService {
         return enriched;
     }
 
-    private async searchVector(embedding: number[], limit: number) {
+    private async searchVector(embedding: number[], limit: number, categoryFilter: string | null = null) {
+        const whereClause = categoryFilter ? `WHERE "docCategory" = $3` : '';
+        const params: any[] = [`[${embedding.join(',')}]`, limit];
+        if (categoryFilter) params.push(categoryFilter);
+
         return AppDataSource.query(
             `
             SELECT
@@ -96,21 +109,27 @@ export class RetrievalService {
               metadata,
               "parentId" as parentid,
               "contentHash" as contenthash,
+              "docCategory" as doccategory,
               1 - (embedding <=> $1::vector) as similarity,
               'vector' as source_type
             FROM knowledge_base_chunks
+            ${whereClause}
             ORDER BY embedding <=> $1::vector ASC
             LIMIT $2
             `,
-            [`[${embedding.join(',')}]`, limit]
+            params
         );
     }
 
-    private async searchKeyword(query: string, limit: number) {
+    private async searchKeyword(query: string, limit: number, categoryFilter: string | null = null) {
         // Clean query for TSVECTOR (remove special chars that might break syntax)
         const cleanQuery = query.replace(/[|&:*!]/g, ' ').trim().split(/\s+/).join(' & ');
         if (!cleanQuery) return [];
 
+        const categoryCondition = categoryFilter ? `AND "docCategory" = $3` : '';
+        const params: any[] = [query, limit];
+        if (categoryFilter) params.push(categoryFilter);
+
         return AppDataSource.query(
             `
             SELECT
@@ -119,14 +138,16 @@ export class RetrievalService {
               metadata,
               "parentId" as parentid,
               "contentHash" as contenthash,
+              "docCategory" as doccategory,
               ts_rank(tsk, plainto_tsquery('english', $1)) as rank,
               'keyword' as source_type
             FROM knowledge_base_chunks
             WHERE tsk @@ plainto_tsquery('english', $1)
+            ${categoryCondition}
             ORDER BY rank DESC
             LIMIT $2
             `,
-            [query, limit] // plainto_tsquery handles the parsing safely
+            params
         );
     }
 
