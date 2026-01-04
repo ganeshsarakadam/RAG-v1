@@ -93,3 +93,4 @@ To compare chunking strategies (e.g., Paragraph vs Fixed-Size):
 - **Database**: PostgreSQL with `pgvector`
 - **ORM**: TypeORM
 - **AI/ML**: Google Gemini SDK (`@google/generative-ai`)
+
