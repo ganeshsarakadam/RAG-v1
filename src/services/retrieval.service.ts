@@ -20,7 +20,9 @@ export class RetrievalService {
             const candidateLimit = limit * 4;
 
             // Determine if we should filter by category (only if high confidence)
-            const categoryFilter = classification.confidence === 'high' ? classification.primaryCategory : null;
+            // DISABLED: Encyclopedia data not yet ingested, so filtering causes 0 results
+            // const categoryFilter = classification.confidence === 'high' ? classification.primaryCategory : null;
+            const categoryFilter = null; // Search all categories for now
 
             const [vectorResults, keywordResults] = await Promise.all([
                 this.searchVector(queryEmbedding, candidateLimit, categoryFilter),
