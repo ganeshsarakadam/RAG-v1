@@ -15,6 +15,8 @@
     "migrate-data": "ts-node src/scripts/migrate-existing-data.ts",
     "migrate-table": "ts-node src/scripts/migrate-table-and-data.ts",
     "migrate:doc-category": "ts-node src/scripts/migrate-add-doc-category.ts",
+    "migrate:contextual-retrieval": "ts-node src/scripts/migrate-contextual-retrieval.ts",
+    "validate:contextual-retrieval": "ts-node src/scripts/validate-contextual-retrieval.ts",
     "test-speakers": "ts-node src/scripts/test-speaker-extraction.ts",
     "re-extract-speakers": "ts-node src/scripts/re-extract-speakers.ts"
   },

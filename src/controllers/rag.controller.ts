@@ -13,10 +13,13 @@ export const ask = async (req: Request, res: Response) => {
         const modelType = mode === 'quick' ? 'flash' : 'pro';
 
         // Use the new stream method
-        const { stream, sources } = await ragService.askQuestionStream(question, modelType);
+        const result = await ragService.askQuestionStream(question, modelType);
+        const { stream, sources, fallbackAnswer } = result as any;
 
         if (!stream) {
-            res.json({ answer: "I'm sorry, I couldn't find any relevant information.", sources: [] });
+            // Handle low-quality retrieval or no results
+            const answer = fallbackAnswer || "I'm sorry, I couldn't find any relevant information.";
+            res.json({ answer, sources: sources || [] });
             return;
         }
 
@@ -28,19 +31,47 @@ export const ask = async (req: Request, res: Response) => {
         res.flushHeaders(); // Send headers immediately
 
         // Iterate over the stream
-        for await (const chunk of stream) {
+        // GenerateContentStreamResult has .stream property that is async iterable
+        for await (const chunk of stream.stream) {
             const chunkText = chunk.text();
             res.write(chunkText);
         }
 
         // Append Sources formatted as Markdown
         if (sources && sources.length > 0) {
-            res.write('\n\n---\n\n**Sources:**\n');
-            sources.forEach((source: any) => {
-                const similarityPercent = (source.similarity * 100).toFixed(1);
-                const location = source.parva ? `${source.parva}, Ch ${source.chapter}` : 'Unknown Location';
-                res.write(`*   [${location}](source:${source.id}) (Confidence: ${similarityPercent}%)\n`);
+            // Filter out sources with invalid similarity scores
+            const validSources = sources.filter((source: any) => {
+                const similarity = source.similarity;
+                return typeof similarity === 'number' && !isNaN(similarity) && similarity > 0;
             });
+
+            if (validSources.length > 0) {
+                res.write('\n\n---\n\n**Sources:**\n');
+                validSources.forEach((source: any) => {
+                    const similarityPercent = (source.similarity * 100).toFixed(0);
+
+                    // Build location string
+                    const parts: string[] = [];
+                    if (source.parva) parts.push(source.parva);
+                    if (source.chapter) parts.push(`Chapter ${source.chapter}`);
+                    if (source.section_title) parts.push(source.section_title);
+
+                    const location = parts.length > 0 ? parts.join(' - ') : 'Mahabharata';
+
+                    // Add speaker if available
+                    const speaker = source.speaker ? ` (${source.speaker})` : '';
+
+                    // Add page number if available
+                    let pageInfo = '';
+                    if (source.page) {
+                        pageInfo = source.pageEnd && source.pageEnd !== source.page
+                            ? ` [pp. ${source.page}-${source.pageEnd}]`
+                            : ` [p. ${source.page}]`;
+                    }
+
+                    res.write(`*   ${location}${speaker}${pageInfo} — ${similarityPercent}% match\n`);
+                });
+            }
         }
 
         res.end();

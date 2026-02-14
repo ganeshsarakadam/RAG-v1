@@ -1,7 +1,7 @@
 const pdf = require('pdf-parse');
 import { AppDataSource } from '../config/database';
 import { DocumentChunkRecursive } from '../entities/DocumentChunkRecursive';
-import { generateEmbedding } from '../utils/gemini';
+import { generateEmbedding, generateChunkContext } from '../utils/gemini';
 import { MetadataExtractor } from '../utils/metadata-extractor';
 import { HierarchicalChunker, ChunkWithMetadata } from '../utils/hierarchical-chunking';
 
@@ -85,8 +85,11 @@ export class IngestionService {
             console.log(`✅ ${deduplicatedChunks.length} unique chunks after deduplication`);
 
             // TWO-PASS SAVING
-            const BATCH_SIZE = 50;
-            const DELAY_MS = 2000;
+            // NOTE: Contextual content generation is disabled for now
+            // To re-enable, set ENABLE_CONTEXTUAL_CONTENT = true
+            const ENABLE_CONTEXTUAL_CONTENT = false; // Set to true to enable contextual content generation
+            const BATCH_SIZE = ENABLE_CONTEXTUAL_CONTENT ? 25 : 50; // Use larger batches when not generating context
+            const DELAY_MS = ENABLE_CONTEXTUAL_CONTENT ? 2500 : 1500; // Less delay needed without context generation
 
             // Map to store chunk entities by their original index
             const chunkEntities: { [key: number]: DocumentChunkRecursive } = {};
@@ -102,14 +105,47 @@ export class IngestionService {
 
                 const embeddingPromises = batch.map(async (chunkData: ChunkWithMetadata) => {
                     try {
-                        const embedding = await generateEmbedding(chunkData.content);
+                        let contentToEmbed = chunkData.content;
+                        let contextSummary: string | undefined;
+
+                        // Contextual Retrieval: Generate context for CHILD chunks only
+                        // NOTE: Currently disabled - set ENABLE_CONTEXTUAL_CONTENT = true to enable
+                        if (ENABLE_CONTEXTUAL_CONTENT && chunkData.metadata.type === 'child' && chunkData.parentContent) {
+                            try {
+                                contextSummary = await generateChunkContext(
+                                    chunkData.content,
+                                    chunkData.parentContent,
+                                    {
+                                        parva: chunkData.metadata.parva,
+                                        chapter: chunkData.metadata.chapter,
+                                        section_title: chunkData.metadata.section_title,
+                                        speaker: chunkData.metadata.speaker
+                                    }
+                                );
+
+                                // Format: [CONTEXT]\n{context}\n\n[CONTENT]\n{original}
+                                contentToEmbed = `[CONTEXT]\n${contextSummary}\n\n[CONTENT]\n${chunkData.content}`;
+
+                                console.log(`   📝 Generated context for chunk ${chunkData.metadata.chunk_index}`);
+                            } catch (err) {
+                                console.warn(`   ⚠️  Context generation failed for chunk ${chunkData.metadata.chunk_index}, using original content`);
+                            }
+                        }
+
+                        // Generate embedding with contextual content
+                        const embedding = await generateEmbedding(contentToEmbed);
 
                         const chunk = new DocumentChunkRecursive();
-                        chunk.content = chunkData.content;
+                        chunk.content = chunkData.content; // Store original content
+                        chunk.contextualContent = contentToEmbed !== chunkData.content ? contentToEmbed : null;
                         chunk.religion = religion;
                         chunk.textSource = textSource;
                         chunk.docCategory = docCategory;
-                        chunk.metadata = chunkData.metadata;
+                        chunk.metadata = {
+                            ...chunkData.metadata,
+                            has_context: contentToEmbed !== chunkData.content,
+                            context_summary: contextSummary
+                        };
                         chunk.embedding = embedding;
                         chunk.contentHash = chunkData.contentHash;
                         chunk.parentId = null; // Will be set in second pass

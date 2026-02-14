@@ -1,8 +1,28 @@
 import { recursiveChunking } from './recursive-chunking';
 import { MetadataExtractor, DocumentSection } from './metadata-extractor';
 
+/**
+ * Configuration for chunking different content types
+ */
+export interface ChunkingConfig {
+    childChunkSize: number;
+    childOverlap: number;
+}
+
+/**
+ * Predefined chunking configurations for different content types
+ */
+export const CHUNKING_PRESETS: Record<string, ChunkingConfig> = {
+    scripture: { childChunkSize: 1000, childOverlap: 200 },      // Default for religious texts
+    encyclopedia: { childChunkSize: 500, childOverlap: 100 },    // Shorter for factual entries
+    commentary: { childChunkSize: 1500, childOverlap: 300 },     // Longer for analytical content
+    dialogue: { childChunkSize: 800, childOverlap: 150 },        // Medium for conversational content
+    default: { childChunkSize: 1000, childOverlap: 200 }
+};
+
 export interface ChunkWithMetadata {
     content: string;
+    contextualContent?: string; // Contextual Retrieval: Content with context prepended
     metadata: {
         source: string;
         parva: string;
@@ -11,8 +31,13 @@ export interface ChunkWithMetadata {
         speaker?: string;
         chunk_index: number;
         type: 'parent' | 'child';
+        page?: number;      // PDF page number where chunk starts
+        pageEnd?: number;   // PDF page number where chunk ends
+        has_context?: boolean; // Contextual Retrieval: tracks if chunk has contextual embedding
+        context_summary?: string; // Contextual Retrieval: the generated context description
     };
     parentIndex?: number; // Reference to parent chunk index
+    parentContent?: string; // Contextual Retrieval: Parent content for context generation
     contentHash: string;
 }
 
@@ -56,7 +81,9 @@ export class HierarchicalChunker {
                     section_title: section.sectionTitle,
                     speaker: MetadataExtractor.extractSpeaker(section.content),
                     chunk_index: globalChunkIndex++,
-                    type: 'parent'
+                    type: 'parent',
+                    page: section.pageStart,
+                    pageEnd: section.pageEnd
                 },
                 contentHash: MetadataExtractor.generateContentHash(section.content)
             };
@@ -72,7 +99,15 @@ export class HierarchicalChunker {
                     childOverlap
                 );
 
+                // Get parent speaker for inheritance
+                const parentSpeaker = parentChunk.metadata.speaker;
+
                 childChunkTexts.forEach(childText => {
+                    // Try to extract speaker from child text first
+                    const childSpeaker = MetadataExtractor.extractSpeaker(childText);
+                    // Inherit from parent if child has no speaker detected
+                    const speaker = childSpeaker || parentSpeaker;
+
                     const childChunk: ChunkWithMetadata = {
                         content: childText,
                         metadata: {
@@ -80,11 +115,15 @@ export class HierarchicalChunker {
                             parva: section.parva,
                             chapter: section.chapter,
                             section_title: section.sectionTitle,
-                            speaker: MetadataExtractor.extractSpeaker(childText),
+                            speaker,
                             chunk_index: globalChunkIndex++,
-                            type: 'child'
+                            type: 'child',
+                            // Child chunks inherit parent's page range
+                            page: section.pageStart,
+                            pageEnd: section.pageEnd
                         },
                         parentIndex, // Link to parent
+                        parentContent: section.content, // Contextual Retrieval: Store parent content for context generation
                         contentHash: MetadataExtractor.generateContentHash(childText)
                     };
 

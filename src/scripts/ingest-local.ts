@@ -3,12 +3,72 @@ import path from 'path';
 const pdf = require('pdf-parse');
 import { AppDataSource, initializeDatabase } from '../config/database';
 import { DocumentChunkRecursive } from '../entities/DocumentChunkRecursive';
-import { generateEmbedding } from '../utils/gemini';
-import { MetadataExtractor } from '../utils/metadata-extractor';
+import { generateEmbedding, generateChunkContext } from '../utils/gemini';
+import { MetadataExtractor, PageInfo } from '../utils/metadata-extractor';
 import { HierarchicalChunker, ChunkWithMetadata } from '../utils/hierarchical-chunking';
 
 const PDF_FILE_NAME = 'Mahabharata (Unabridged in English).pdf';
 const FILE_PATH = path.join(__dirname, '../../', PDF_FILE_NAME);
+
+/**
+ * Parse PDF page-by-page to get accurate page boundaries
+ * Returns both the full text and the page map
+ */
+async function parsePdfWithPages(pdfBuffer: Buffer): Promise<{ text: string; pages: PageInfo[] }> {
+    const pages: PageInfo[] = [];
+    let fullText = '';
+    let currentIndex = 0;
+
+    // Custom page render function that processes each page
+    const renderPage = (pageData: any) => {
+        return pageData.getTextContent()
+            .then((textContent: any) => {
+                // Extract text from this page
+                let pageText = '';
+                let lastY: number | null = null;
+
+                for (const item of textContent.items) {
+                    // Add newline if y position changes (new line)
+                    if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) {
+                        pageText += '\n';
+                    }
+                    pageText += item.str;
+                    lastY = item.transform[5];
+                }
+
+                const pageNum = pages.length + 1;
+                const startIndex = currentIndex;
+
+                pages.push({
+                    pageNum,
+                    startIndex,
+                    endIndex: 0, // Will be updated after adding separator
+                    charCount: pageText.length
+                });
+
+                fullText += pageText + '\n';  // Add separator between pages
+                currentIndex = fullText.length;
+
+                // Update endIndex after adding separator
+                pages[pages.length - 1].endIndex = currentIndex;
+
+                // Log progress every 200 pages
+                if (pageNum % 200 === 0) {
+                    console.log(`   📄 Processed page ${pageNum}...`);
+                }
+
+                return pageText;
+            });
+    };
+
+    const options = {
+        pagerender: renderPage
+    };
+
+    await pdf(pdfBuffer, options);
+
+    return { text: fullText, pages };
+}
 
 const ingestFile = async () => {
     try {
@@ -28,27 +88,31 @@ const ingestFile = async () => {
         const existingCount = await chunkRepository.count();
         console.log(`📊 Current DB Count: ${existingCount}`);
 
-        if (existingCount > 1000) {
+        // Check for --force flag to allow re-ingestion
+        const forceReIngest = process.argv.includes('--force');
+
+        if (existingCount > 1000 && !forceReIngest) {
             console.log(`✅ Database appears populated (${existingCount} chunks).`);
-            console.log(`ℹ️  To re-ingest with hierarchical chunking, manually clear the database first.`);
-            console.log(`   Run: psql knowledge_db -c "TRUNCATE TABLE knowledge_base_chunks;"`);
+            console.log(`ℹ️  To re-ingest, run with --force flag:`);
+            console.log(`   npx ts-node src/scripts/ingest-local.ts --force`);
             process.exit(0);
         }
 
         if (existingCount > 0) {
-            console.log('🧹 Clearing partial data...');
+            console.log('🧹 Clearing existing data before re-ingestion...');
             await chunkRepository.clear();
+            console.log('✅ Database cleared');
         }
 
-        // 3. Parse PDF
-        console.log('📖 Parsing PDF (this may take a moment)...');
+        // 3. Parse PDF page-by-page for accurate page numbers
+        console.log('📖 Parsing PDF page-by-page (this takes ~30s for accurate page tracking)...');
         const dataBuffer = fs.readFileSync(FILE_PATH);
-        const data = await pdf(dataBuffer);
-        console.log(`✅ Extracted text from ${data.numpages} pages`);
+        const { text: pdfText, pages: pageMap } = await parsePdfWithPages(dataBuffer);
+        console.log(`✅ Extracted text from ${pageMap.length} pages (${pdfText.length} characters)`);
 
-        // 4. Extract document structure (Parva/Section boundaries)
-        console.log('🔍 Analyzing document structure...');
-        const sections = MetadataExtractor.parseDocumentStructure(data.text);
+        // 4. Extract document structure (Parva/Section boundaries) with accurate page numbers
+        console.log('🔍 Analyzing document structure with page tracking...');
+        const sections = MetadataExtractor.parseDocumentStructureWithPages(pdfText, pageMap);
         console.log(`✅ Found ${sections.length} sections`);
 
         if (sections.length === 0) {
@@ -72,8 +136,11 @@ const ingestFile = async () => {
         console.log(`✅ ${deduplicatedChunks.length} unique chunks after deduplication`);
 
         // 7. TWO-PASS SAVING
-        const BATCH_SIZE = 50;
-        const DELAY_MS = 2000;
+        // NOTE: Contextual content generation is disabled for now
+        // To re-enable, set ENABLE_CONTEXTUAL_CONTENT = true
+        const ENABLE_CONTEXTUAL_CONTENT = false; // Set to true to enable contextual content generation
+        const BATCH_SIZE = ENABLE_CONTEXTUAL_CONTENT ? 25 : 50; // Use larger batches when not generating context
+        const DELAY_MS = ENABLE_CONTEXTUAL_CONTENT ? 2500 : 1500; // Less delay needed without context generation
 
         // Map to store chunk entities by their original index
         const chunkEntities: { [key: number]: DocumentChunkRecursive } = {};
@@ -89,11 +156,47 @@ const ingestFile = async () => {
 
             const embeddingPromises = batch.map(async (chunkData: ChunkWithMetadata) => {
                 try {
-                    const embedding = await generateEmbedding(chunkData.content);
+                    let contentToEmbed = chunkData.content;
+                    let contextSummary: string | undefined;
+
+                    // Contextual Retrieval: Generate context for CHILD chunks only
+                    // NOTE: Currently disabled - set ENABLE_CONTEXTUAL_CONTENT = true to enable
+                    if (ENABLE_CONTEXTUAL_CONTENT && chunkData.metadata.type === 'child' && chunkData.parentContent) {
+                        try {
+                            contextSummary = await generateChunkContext(
+                                chunkData.content,
+                                chunkData.parentContent,
+                                {
+                                    parva: chunkData.metadata.parva,
+                                    chapter: chunkData.metadata.chapter,
+                                    section_title: chunkData.metadata.section_title,
+                                    speaker: chunkData.metadata.speaker
+                                }
+                            );
+
+                            // Format: [CONTEXT]\n{context}\n\n[CONTENT]\n{original}
+                            contentToEmbed = `[CONTEXT]\n${contextSummary}\n\n[CONTENT]\n${chunkData.content}`;
+
+                            console.log(`   📝 Generated context for chunk ${chunkData.metadata.chunk_index}`);
+                        } catch (err) {
+                            console.warn(`   ⚠️  Context generation failed for chunk ${chunkData.metadata.chunk_index}, using original content`);
+                        }
+                    }
+
+                    // Generate embedding with contextual content
+                    const embedding = await generateEmbedding(contentToEmbed);
 
                     const chunk = new DocumentChunkRecursive();
-                    chunk.content = chunkData.content;
-                    chunk.metadata = chunkData.metadata;
+                    chunk.content = chunkData.content; // Store original content
+                    chunk.contextualContent = contentToEmbed !== chunkData.content ? contentToEmbed : null;
+                    chunk.religion = 'hinduism';
+                    chunk.textSource = 'mahabharatam';
+                    chunk.docCategory = 'scripture';
+                    chunk.metadata = {
+                        ...chunkData.metadata,
+                        has_context: contentToEmbed !== chunkData.content,
+                        context_summary: contextSummary
+                    };
                     chunk.embedding = embedding;
                     chunk.contentHash = chunkData.contentHash;
                     chunk.parentId = null; // Will be set in second pass

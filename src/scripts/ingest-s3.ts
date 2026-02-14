@@ -5,7 +5,7 @@ import { Readable } from 'stream';
 const pdf = require('pdf-parse');
 import { AppDataSource, initializeDatabase } from '../config/database';
 import { DocumentChunkRecursive } from '../entities/DocumentChunkRecursive';
-import { generateEmbedding } from '../utils/gemini';
+import { generateEmbedding, generateChunkContext } from '../utils/gemini';
 import { MetadataExtractor } from '../utils/metadata-extractor';
 import { HierarchicalChunker, ChunkWithMetadata } from '../utils/hierarchical-chunking';
 import dotenv from 'dotenv';
@@ -99,8 +99,8 @@ const ingestFileFromS3 = async () => {
         console.log(`✅ ${deduplicatedChunks.length} unique chunks after deduplication`);
 
         // 7. TWO-PASS SAVING
-        const BATCH_SIZE = 50;
-        const DELAY_MS = 2000;
+        const BATCH_SIZE = 25; // Reduced from 50 for contextual retrieval (more API calls per chunk)
+        const DELAY_MS = 2500; // Increased from 2000 for rate limiting
         const chunkEntities: { [key: number]: DocumentChunkRecursive } = {};
 
         console.log('\n📝 PASS 1: Generating embeddings and saving chunks...');
@@ -114,11 +114,43 @@ const ingestFileFromS3 = async () => {
 
             const embeddingPromises = batch.map(async (chunkData: ChunkWithMetadata) => {
                 try {
-                    const embedding = await generateEmbedding(chunkData.content);
+                    let contentToEmbed = chunkData.content;
+                    let contextSummary: string | undefined;
+
+                    // Contextual Retrieval: Generate context for CHILD chunks only
+                    if (chunkData.metadata.type === 'child' && chunkData.parentContent) {
+                        try {
+                            contextSummary = await generateChunkContext(
+                                chunkData.content,
+                                chunkData.parentContent,
+                                {
+                                    parva: chunkData.metadata.parva,
+                                    chapter: chunkData.metadata.chapter,
+                                    section_title: chunkData.metadata.section_title,
+                                    speaker: chunkData.metadata.speaker
+                                }
+                            );
+
+                            // Format: [CONTEXT]\n{context}\n\n[CONTENT]\n{original}
+                            contentToEmbed = `[CONTEXT]\n${contextSummary}\n\n[CONTENT]\n${chunkData.content}`;
+
+                            console.log(`   📝 Generated context for chunk ${chunkData.metadata.chunk_index}`);
+                        } catch (err) {
+                            console.warn(`   ⚠️  Context generation failed for chunk ${chunkData.metadata.chunk_index}, using original content`);
+                        }
+                    }
+
+                    // Generate embedding with contextual content
+                    const embedding = await generateEmbedding(contentToEmbed);
 
                     const chunk = new DocumentChunkRecursive();
-                    chunk.content = chunkData.content;
-                    chunk.metadata = chunkData.metadata;
+                    chunk.content = chunkData.content; // Store original content
+                    chunk.contextualContent = contentToEmbed !== chunkData.content ? contentToEmbed : null;
+                    chunk.metadata = {
+                        ...chunkData.metadata,
+                        has_context: contentToEmbed !== chunkData.content,
+                        context_summary: contextSummary
+                    };
                     chunk.embedding = embedding;
                     chunk.contentHash = chunkData.contentHash;
                     chunk.parentId = null;

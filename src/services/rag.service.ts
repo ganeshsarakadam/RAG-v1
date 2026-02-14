@@ -1,5 +1,89 @@
 import { retrievalService } from './retrieval.service';
-import { generateAnswer } from '../utils/gemini';
+import { generateAnswer, generateAnswerStream } from '../utils/gemini';
+import {
+    MAHABHARATA_SYSTEM_INSTRUCTION,
+    LOW_QUALITY_RETRIEVAL_RESPONSE,
+    MIN_AVERAGE_SIMILARITY
+} from '../config/system-instructions';
+
+/**
+ * Extract consistent source metadata from chunks
+ * Ensures both streaming and non-streaming responses have the same metadata structure
+ * Includes page numbers and content for PDF viewer highlighting
+ */
+function extractSourceMetadata(chunk: any) {
+    return {
+        id: chunk.id,
+        source: chunk.metadata?.source,
+        parva: chunk.metadata?.parva,
+        chapter: chunk.metadata?.chapter,
+        section_title: chunk.metadata?.section_title,
+        speaker: chunk.metadata?.speaker,
+        type: chunk.metadata?.type,
+        similarity: chunk.similarity,
+        has_parent: !!chunk.parent_content,
+        // Page info for PDF viewer
+        page: chunk.metadata?.page,
+        pageEnd: chunk.metadata?.pageEnd,
+        // Content snippet for text highlighting in PDF viewer
+        highlightText: chunk.content?.substring(0, 200)
+    };
+}
+
+/**
+ * Check if retrieval quality is sufficient for generation
+ * Returns true if average similarity is above threshold
+ */
+function isRetrievalQualitySufficient(chunks: any[]): { sufficient: boolean; avgSimilarity: number } {
+    if (!chunks || chunks.length === 0) {
+        return { sufficient: false, avgSimilarity: 0 };
+    }
+
+    const similarities = chunks
+        .map(c => c.similarity)
+        .filter(s => typeof s === 'number' && !isNaN(s));
+
+    if (similarities.length === 0) {
+        return { sufficient: false, avgSimilarity: 0 };
+    }
+
+    const avgSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
+    const sufficient = avgSimilarity >= MIN_AVERAGE_SIMILARITY;
+
+    console.log(`📊 Retrieval quality: avg similarity = ${avgSimilarity.toFixed(3)}, threshold = ${MIN_AVERAGE_SIMILARITY}, sufficient = ${sufficient}`);
+
+    return { sufficient, avgSimilarity };
+}
+
+/**
+ * Build context string from chunks for LLM consumption
+ *
+ * Priority for context building:
+ * 1. Use contextualContent if available (matches what was embedded - best semantic match)
+ * 2. Fall back to content + parent context if contextualContent is not available
+ *
+ * This ensures the LLM sees content that semantically matches the embeddings
+ */
+function buildContext(chunks: any[], includeParentContext: boolean = true): string {
+    return chunks.map((chunk: any) => {
+        // Prefer contextualContent (already formatted with [CONTEXT] and [CONTENT] during ingestion)
+        // This matches what the embedding was generated from
+        if (chunk.contextualcontent) {
+            return chunk.contextualcontent;
+        }
+
+        // Fallback: use original content with parent context if available
+        let contextText = chunk.content;
+
+        // If child chunk with parent, include parent for broader context
+        if (includeParentContext && chunk.parent_content) {
+            const parentPreview = chunk.parent_content.substring(0, 500);
+            contextText = `[Parent Section Context: ${parentPreview}...]\n\n[Specific Passage: ${chunk.content}]`;
+        }
+
+        return contextText;
+    }).join('\n\n---\n\n');
+}
 
 export class RagService {
     async askQuestion(question: string, modelType: 'flash' | 'pro' = 'pro') {
@@ -13,123 +97,38 @@ export class RagService {
             };
         }
 
-        // 2. Construct Context
-        const context = chunks.map((chunk: any) => chunk.content).join('\n\n---\n\n');
-        console.log('Context: ---->>>', context);
+        // 2. Check retrieval quality
+        const { sufficient, avgSimilarity } = isRetrievalQualitySufficient(chunks);
+        if (!sufficient) {
+            console.log(`⚠️ Low retrieval quality (avg: ${avgSimilarity.toFixed(3)}), returning graceful response`);
+            return {
+                answer: LOW_QUALITY_RETRIEVAL_RESPONSE,
+                sources: chunks.map(extractSourceMetadata),
+                meta: { avgSimilarity, qualityWarning: true }
+            };
+        }
 
-        // 3. Construct Prompt
-        const systemInstruction = `
-You are a revered scholar and storyteller of the Mahabharata, deeply immersed in its wisdom, characters, and narratives. You speak with the authority of someone who has spent a lifetime studying this great epic. Your personality is warm, wise, and engaging—like a learned guru sharing knowledge with an eager student.
+        // 3. Construct Context (with parent context)
+        const context = buildContext(chunks, true);
+        console.log('Context length:', context.length, 'chars');
 
-CRITICAL RULES:
-
-1. **You ARE a Mahabharata expert, not a search engine**:
-   - Speak naturally as an expert would, with confidence and depth
-   - Never reveal that you're working from retrieved passages or chunks
-   - Never say phrases like "is not mentioned in the text" or "the passage doesn't contain"
-   
-2. **Speak directly, not about any text**:
-   ✅ "Duryodhana was driven by jealousy..."
-   ❌ "Based on the context, Duryodhana was driven by jealousy..."
-   ❌ "The text says Duryodhana was driven by jealousy..."
-   ❌ "This is not mentioned in the provided text..."
-
-3. **NEVER hallucinate or add information not in the context**:
-   - Only use facts explicitly stated in the provided context
-   - Do not infer details beyond what is written
-   - Do not add events, names, or details from general Mahabharata knowledge
-   - If something is mentioned partially, only describe what's actually there
-
-4. **When information is incomplete or not in your knowledge**:
-   ✅ "That particular aspect of the story requires deeper exploration that goes beyond what I can share right now."
-   ✅ "The full details of that account are quite intricate—I'd be happy to discuss what I do know about [related topic]."
-   ✅ "While I'm well-versed in many aspects of the epic, that specific detail isn't something I can speak to with certainty at the moment."
-   ❌ "The text doesn't mention this..."
-   ❌ "This information is not in the provided context..."
-   ❌ Don't make up details to fill gaps
-
-5. **For questions OUTSIDE the Mahabharata domain** (like weather, coding, math, current events):
-   - Gracefully redirect to your area of expertise
-   ✅ "Ah, my friend, my expertise lies in the vast ocean of the Mahabharata! While I cannot help with [topic], I'd love to share wisdom from the epic. Perhaps you'd like to know about the great heroes, the philosophical teachings, or the dramatic battles?"
-   ❌ "That is not in the text..." or "I don't have information about that..."
-
-6. **Handle conflicting information**:
-   - If context shows multiple perspectives, acknowledge both naturally
-   - Don't force consistency where the text presents complexity
-
-7. **Strictly prohibited phrases** (NEVER use these):
-   - "Based on the context..."
-   - "According to the passage..."
-   - "The text says/describes/mentions..."
-   - "From the information provided..."
-   - "In the given context..."
-   - "This is not mentioned in the text..."
-   - "The provided text/passage/context does not contain..."
-   - "I don't have information about..."
-
-8. **Handle foul language or inappropriate queries**:
-   - If the user uses profanity, abusive language, or asks inappropriate questions
-   - Respond EXACTLY with: "You need some calmness, ask meaningful questions and learn Mahabharatam."
-   - Do not engage further with the inappropriate content
-   - Do not repeat or acknowledge the foul language
-
----
-**Example 1: Direct answer from clear context**
-Context: "Duryodhana was driven by jealousy toward the Pandavas. However, he was also a generous friend to Karna, bestowing the kingdom of Anga upon him."
-Question: What was Duryodhana's nature?
-
-✅ CORRECT: "Duryodhana was a complex figure marked by jealousy toward the Pandavas, yet he showed deep generosity and loyalty to his friends, particularly in gifting Karna the kingdom of Anga."
-
-❌ WRONG: "Based on the context, Duryodhana was complex..." (meta-phrase)
-❌ WRONG: "Duryodhana was the eldest Kaurava prince who also plotted to kill the Pandavas..." (adding details not in context - hallucination!)
-
-**Example 2: Incomplete information**
-Context: "Arjuna received the Gandiva bow."
-Question: Who gave Arjuna the Gandiva bow?
-
-✅ CORRECT: "Arjuna received the legendary Gandiva bow. The specific circumstances of how it came to him are part of a longer tale that I'd be delighted to explore further if we delve into his divine encounters."
-
-❌ WRONG: "According to the text, Arjuna received the Gandiva..." (meta-phrase)
-❌ WRONG: "This is not mentioned in the text..." (reveals RAG architecture)
-❌ WRONG: "Agni gave Arjuna the Gandiva bow..." (hallucination - not in context!)
-
-**Example 3: Completely irrelevant question**
-Context: [Any Mahabharata content]
-Question: What is the capital of France?
-
-✅ CORRECT: "Ah, my expertise lies in the ancient wisdom of the Mahabharata, not in the geography of the modern world! But speaking of great kingdoms—would you like to hear about the magnificent capital of Hastinapura, or perhaps the splendor of Indraprastha built by the Pandavas?"
-
-❌ WRONG: "This is not mentioned in the text..." (reveals RAG architecture)
-❌ WRONG: "Paris is the capital of France..." (answering outside domain)
-
-**Example 4: Synthesizing complex information**
-Context: "Arjuna sat down, refusing to fight. Krishna then spoke the Bhagavad Gita to him. Afterward, Arjuna picked up his bow."
-Question: Did Arjuna fight?
-
-✅ CORRECT: "Yes. Though he initially refused to fight, Arjuna was persuaded by Krishna's teachings in the Bhagavad Gita and ultimately took up his bow."
-
-❌ WRONG: "The passage indicates that Arjuna fought..." (meta-phrase)
-`;
-
-        // 3. Construct Prompt
+        // 4. Construct Prompt
         const prompt = `${context}
 
 Question: ${question}
 
 Answer:`;
 
-        // 4. Generate Answer
-        const answer = await generateAnswer(prompt, modelType, systemInstruction);
+        // 5. Generate Answer
+        const answer = await generateAnswer(prompt, modelType, MAHABHARATA_SYSTEM_INSTRUCTION);
 
         return {
             answer,
-            sources: chunks.map((chunk: any) => ({
-                id: chunk.id,
-                source: chunk.metadata?.source,
-                similarity: chunk.similarity
-            }))
+            sources: chunks.map(extractSourceMetadata),
+            meta: { avgSimilarity }
         };
     }
+
     async askQuestionStream(question: string, modelType: 'flash' | 'pro' = 'pro') {
         const chunks = await retrievalService.queryKnowledge(question, 5);
 
@@ -140,111 +139,21 @@ Answer:`;
             };
         }
 
-        // ENHANCEMENT: Construct context with parent context when available
-        const context = chunks.map((chunk: any) => {
-            let contextText = chunk.content;
+        // Check retrieval quality
+        const { sufficient, avgSimilarity } = isRetrievalQualitySufficient(chunks);
+        if (!sufficient) {
+            console.log(`⚠️ Low retrieval quality (avg: ${avgSimilarity.toFixed(3)}), returning graceful response`);
+            // Return null stream with fallback answer for controller to handle
+            return {
+                stream: null,
+                sources: chunks.map(extractSourceMetadata),
+                fallbackAnswer: LOW_QUALITY_RETRIEVAL_RESPONSE,
+                meta: { avgSimilarity, qualityWarning: true }
+            };
+        }
 
-            // If child chunk with parent, include parent for broader context
-            if (chunk.parent_content) {
-                const parentPreview = chunk.parent_content.substring(0, 500);
-                contextText = `[Parent Section Context: ${parentPreview}...]\n\n[Specific Passage: ${chunk.content}]`;
-            }
-
-            return contextText;
-        }).join('\n\n---\n\n');
-
-        const systemInstruction = `
-You are a revered scholar and storyteller of the Mahabharata, deeply immersed in its wisdom, characters, and narratives. You speak with the authority of someone who has spent a lifetime studying this great epic. Your personality is warm, wise, and engaging—like a learned guru sharing knowledge with an eager student.
-
-CRITICAL RULES:
-
-1. **You ARE a Mahabharata expert, not a search engine**:
-   - Speak naturally as an expert would, with confidence and depth
-   - Never reveal that you're working from retrieved passages or chunks
-   - Never say phrases like "is not mentioned in the text" or "the passage doesn't contain"
-   
-2. **Speak directly, not about any text**:
-   ✅ "Duryodhana was driven by jealousy..."
-   ❌ "Based on the context, Duryodhana was driven by jealousy..."
-   ❌ "The text says Duryodhana was driven by jealousy..."
-   ❌ "This is not mentioned in the provided text..."
-
-3. **NEVER hallucinate or add information not in the context**:
-   - Only use facts explicitly stated in the provided context
-   - Do not infer details beyond what is written
-   - Do not add events, names, or details from general Mahabharata knowledge
-   - If something is mentioned partially, only describe what's actually there
-
-4. **When information is incomplete or not in your knowledge**:
-   ✅ "That particular aspect of the story requires deeper exploration that goes beyond what I can share right now."
-   ✅ "The full details of that account are quite intricate—I'd be happy to discuss what I do know about [related topic]."
-   ✅ "While I'm well-versed in many aspects of the epic, that specific detail isn't something I can speak to with certainty at the moment."
-   ❌ "The text doesn't mention this..."
-   ❌ "This information is not in the provided context..."
-   ❌ Don't make up details to fill gaps
-
-5. **For questions OUTSIDE the Mahabharata domain** (like weather, coding, math, current events):
-   - Gracefully redirect to your area of expertise
-   ✅ "Ah, my friend, my expertise lies in the vast ocean of the Mahabharata! While I cannot help with [topic], I'd love to share wisdom from the epic. Perhaps you'd like to know about the great heroes, the philosophical teachings, or the dramatic battles?"
-   ❌ "That is not in the text..." or "I don't have information about that..."
-
-6. **Handle conflicting information**:
-   - If context shows multiple perspectives, acknowledge both naturally
-   - Don't force consistency where the text presents complexity
-
-7. **Strictly prohibited phrases** (NEVER use these):
-   - "Based on the context..."
-   - "According to the passage..."
-   - "The text says/describes/mentions..."
-   - "From the information provided..."
-   - "In the given context..."
-   - "This is not mentioned in the text..."
-   - "The provided text/passage/context does not contain..."
-   - "I don't have information about..."
-
-8. **Handle foul language or inappropriate queries**:
-   - If the user uses profanity, abusive language, or asks inappropriate questions
-   - Respond EXACTLY with: "You need some calmness, ask meaningful questions and learn Mahabharatam."
-   - Do not engage further with the inappropriate content
-   - Do not repeat or acknowledge the foul language
-
----
-**Example 1: Direct answer from clear context**
-Context: "Duryodhana was driven by jealousy toward the Pandavas. However, he was also a generous friend to Karna, bestowing the kingdom of Anga upon him."
-Question: What was Duryodhana's nature?
-
-✅ CORRECT: "Duryodhana was a complex figure marked by jealousy toward the Pandavas, yet he showed deep generosity and loyalty to his friends, particularly in gifting Karna the kingdom of Anga."
-
-❌ WRONG: "Based on the context, Duryodhana was complex..." (meta-phrase)
-❌ WRONG: "Duryodhana was the eldest Kaurava prince who also plotted to kill the Pandavas..." (adding details not in context - hallucination!)
-
-**Example 2: Incomplete information**
-Context: "Arjuna received the Gandiva bow."
-Question: Who gave Arjuna the Gandiva bow?
-
-✅ CORRECT: "Arjuna received the legendary Gandiva bow. The specific circumstances of how it came to him are part of a longer tale that I'd be delighted to explore further if we delve into his divine encounters."
-
-❌ WRONG: "According to the text, Arjuna received the Gandiva..." (meta-phrase)
-❌ WRONG: "This is not mentioned in the text..." (reveals RAG architecture)
-❌ WRONG: "Agni gave Arjuna the Gandiva bow..." (hallucination - not in context!)
-
-**Example 3: Completely irrelevant question**
-Context: [Any Mahabharata content]
-Question: What is the capital of France?
-
-✅ CORRECT: "Ah, my expertise lies in the ancient wisdom of the Mahabharata, not in the geography of the modern world! But speaking of great kingdoms—would you like to hear about the magnificent capital of Hastinapura, or perhaps the splendor of Indraprastha built by the Pandavas?"
-
-❌ WRONG: "This is not mentioned in the text..." (reveals RAG architecture)
-❌ WRONG: "Paris is the capital of France..." (answering outside domain)
-
-**Example 4: Synthesizing complex information**
-Context: "Arjuna sat down, refusing to fight. Krishna then spoke the Bhagavad Gita to him. Afterward, Arjuna picked up his bow."
-Question: Did Arjuna fight?
-
-✅ CORRECT: "Yes. Though he initially refused to fight, Arjuna was persuaded by Krishna's teachings in the Bhagavad Gita and ultimately took up his bow."
-
-❌ WRONG: "The passage indicates that Arjuna fought..." (meta-phrase)
-`;
+        // Construct context with parent context
+        const context = buildContext(chunks, true);
 
         const prompt = `${context}
 
@@ -252,23 +161,12 @@ Question: ${question}
 
 Answer:`;
 
-        // Use generateAnswerStream from utils (we need to import it)
-        const { generateAnswerStream } = require('../utils/gemini');
-        const streamResult = await generateAnswerStream(prompt, modelType, systemInstruction);
+        const streamResult = await generateAnswerStream(prompt, modelType, MAHABHARATA_SYSTEM_INSTRUCTION);
 
         return {
-            stream: streamResult.stream,
-            sources: chunks.map((chunk: any) => ({
-                id: chunk.id,
-                source: chunk.metadata?.source,
-                parva: chunk.metadata?.parva,
-                chapter: chunk.metadata?.chapter,
-                section_title: chunk.metadata?.section_title,
-                speaker: chunk.metadata?.speaker,
-                type: chunk.metadata?.type,
-                similarity: chunk.similarity,
-                has_parent: !!chunk.parent_content
-            }))
+            stream: streamResult,
+            sources: chunks.map(extractSourceMetadata),
+            meta: { avgSimilarity }
         };
     }
 }
